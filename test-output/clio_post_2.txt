@@ -1,0 +1,115 @@
+URL: https://www.clio.com/blog/cloud-computing-lawyers-ethics-opinions/
+TITLE: A List of All the Ethics Opinions on Cloud Computing for Lawyers
+DATE: Tue Jul 09 2024 00:00:00 GMT-0400 (Eastern Daylight Time)
+SUMMARY: When it comes to cloud computing for lawyers, plenty of states have issued ethics opinions providing guidance on its safe and secure use.
+
+CONTENT:
+
+										
+												
+			Download This Article as a PDF
+		
+
+A List of All the Ethics Opinions on Cloud Computing for Lawyers
+
+Can law firms use the cloud? With widespread adoption by both consumers and business, and increasing cloud adoption amongst law firms, there is still a section of lawyers that remain skeptical about legal cloud computing, and whether they can use the cloud in their legal practices. 
+
+Bar Associations and Law Societies within the US and around the world have issued ethics opinions on cloud computing for lawyers. The vast majority highlight that lawyers can use cloud computing, provided they do appropriate due diligence and find a provider that complies with a lawyer’s ethical duties. For example, a provider must be able to ensure a reasonable expectation of security so that a law firm is able to keep it’s clients’ information confidential in the cloud.
+
+Below are charts linking each ethic opinion on cloud computing for lawyers. We’ve also included some high-level guidance to help a law firm with research into their jurisdiction’s requirements, based on relevant language from the opinions.
+
+In total, 30 US States have issued formal or informal ethics opinions on cloud use for lawyers, and the American Bar Association has also issued an opinion. Outside of the US, we’re tracking 5 other jurisdictions that have issued ethics opinions on cloud computing for lawyers as well.
+
+Opinion 2010-02
+
+Opinion 2014-3
+
+Opinion 09-04 (Note ethics opinions are now governed by the Arizona Supreme Court’s Attorney Ethics Advisory Committee (AEAC), that was created pursuant to Rule 42.1, Ariz. R. Sup. Ct., and Administrative Order No. 2018-110. No past opinions are formally adopted by this committee at this time.) 
+
+Opinion 2010-179
+
+Informal Opinion 2013-07
+
+Opinion 12-3
+
+Opinion 16-06
+
+Opinion 11-01
+
+Opinion KBA E-437
+
+Opinion 19-RPCC-021(focusing on technological competency but covering cloud usage)
+
+Opinion 207
+
+Opinion 12-03 
+
+Opinion RI-355 (declares cloud use permissible in dicta)
+
+Opinion RI-381 (focusing on technological competency but covering cloud usage)
+
+Informal Opinion 2018-09 
+
+Opinion 19-01
+
+Opinion #2012-13/4
+
+Opinion 701
+
+Opinion 842
+
+2011 Formal Ethics Opinion 6
+
+Informal Advisory Opinion 2017-05
+
+data, nonauthorized access to the stored data, or other breach of Security.
+
+Reliable means of retrieving the data if the agreement is
+
+terminated or the vendor goes out of business.
+
+Opinion 99-03 (examining cloud backups)
+
+Opinion 2011-188
+
+Opinion 2011-200
+
+Opinion 2015-F-159
+
+Opinion 680
+
+Opinion 2010-6
+
+Legal Ethics Opinion 1872
+
+Advisory Opinion 2215
+
+Opinion EF-15-01
+
+Formal Opinion 95-398: Access of Nonlawyers to a Lawyer’s Data Base
+
+Cloud computing due diligence guidelines
+
+CCBE Guidelines on the Use Of Cloud Computing Services By Lawyers
+
+Navigating to the Cloud:
+A Framework for Trust
+
+If the state or jurisdiction you practice in is featured within this list, make sure any cloud computing providers you use align with the recommendations within your state’s ethics opinion. No matter what, make sure your provider has strong security standards.
+
+If you’re not sure which legal cloud computing tools your firm needs, check out this list of what technology your law firm actually needs. 
+
+If your state or jurisdiction is not on this list, that doesn’t necessarily mean your law firm is prohibited from using the cloud. Make sure you’re following data security best practices, and reach out to your bar association’s ethics committee if you have concerns. I also recommend tuning in to this webinar on tech competence for lawyers put on by myself and Bob Ambrogi.
+
+Today, cloud technology has a wealth of benefits that outweigh any potential risks for law firms, including increased efficiency, lower overhead, and ease of use for their teams. Law firms should feel confident exploring cloud providers, allowing them to benefit from the flexibility and adaptability the cloud provides in a modern environment.
+
+Note: The information in this article applies only to US practices. This post is provided for informational purposes only. It does not constitute legal, business, or accounting advice.
+
+
+							We published this blog post in April 2020. Last updated: July 9, 2024.
+
+
+																	Categorized in:
+																									Technology															
+
+Meet Clio Duo, your AI partner that amplifies your workflow, helping you spend more time on the work that only you can do.
