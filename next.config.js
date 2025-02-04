@@ -1,9 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ['cheerio'],
   images: {
-    domains: ['oaidalleapiprodscus.blob.core.windows.net'], // For DALL-E generated images
-  },
-}
+    domains: ['www.clio.com', 'www.mycase.com', 'www.lawpay.com']
+  }
+};
 
-export default nextConfig; 
+module.exports = nextConfig; 

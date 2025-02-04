@@ -1,193 +1,123 @@
-import { BlogPost } from '@/types/index.js';
-import { getSlugFromUrl } from '../utils/slug.js';
-import { chromium } from 'playwright';
+import { Article } from '@/types/article.js';
+import { getSlugFromUrl } from '../utils.js';
+import * as cheerio from 'cheerio';
+import puppeteer from 'puppeteer';
 
-export async function scrapeMyCaseBlog(): Promise<BlogPost[]> {
-  let browser = null;
-  let context = null;
-  let page = null;
-  
+export async function scrapeMyCaseBlog(): Promise<Article[]> {
+  const articles: Article[] = [];
+
   try {
-    browser = await chromium.launch({
-      headless: false // Try with visible browser for debugging
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
+
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
     
-    context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 800 },
-      deviceScaleFactor: 2
-    });
-    
-    page = await context.newPage();
-    
-    console.log('Starting MyCase blog scrape...');
-    const posts: BlogPost[] = [];
-    
-    // Start with the blog index page
+    console.log('Navigating to MyCase blog...');
     await page.goto('https://www.mycase.com/blog/', {
-      waitUntil: 'networkidle',
+      waitUntil: 'networkidle0',
       timeout: 30000
     });
-    
-    // Handle cookie consent dialog
-    try {
-      console.log('Looking for cookie consent dialog...');
-      const dialogSelector = '.osano-cm-window';
-      await page.waitForSelector(dialogSelector, { timeout: 5000 });
-      console.log('Found cookie dialog');
-      
-      const acceptButton = await page.waitForSelector('.osano-cm-accept-all', { timeout: 5000 });
-      if (acceptButton) {
-        console.log('Found accept button, clicking...');
-        await acceptButton.click();
-        await page.waitForTimeout(2000);
-        
-        // Wait for dialog to disappear
-        await page.waitForSelector(dialogSelector, { state: 'hidden', timeout: 5000 });
-        console.log('Cookie dialog closed');
-      }
-    } catch (error) {
-      console.log('No cookie consent dialog found or could not interact with it:', error instanceof Error ? error.message : String(error));
-    }
-    
-    console.log('Blog index page loaded, gathering article links...');
-    
-    // Get all article links from the blog index
-    const articleLinks = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('a[href*="/blog/"]'))
-        .map(link => link.getAttribute('href'))
-        .filter((href): href is string => 
-          href !== null && 
-          href.includes('/blog/') &&
-          !href.endsWith('/blog/') &&
-          !href.includes('/category/') &&
-          !href.includes('/tag/') &&
-          !href.includes('/author/')
-        );
-    });
-    
-    console.log(`Found ${articleLinks.length} article links`);
-    
-    // Process each article
-    for (const url of articleLinks.slice(0, 5)) { // Limit to 5 articles for testing
+
+    // Wait for the content to load
+    await page.waitForSelector('.blog-post, article', { timeout: 10000 });
+
+    const html = await page.content();
+    const $ = cheerio.load(html);
+
+    const articleLinks = $('a[href*="/blog/"]')
+      .map((_, el) => {
+        const href = $(el).attr('href');
+        if (!href) return null;
+        if (href.startsWith('http')) return href;
+        if (href.startsWith('/')) return `https://www.mycase.com${href}`;
+        return `https://www.mycase.com/${href}`;
+      })
+      .get()
+      .filter((href): href is string => 
+        href !== null &&
+        href.includes('/blog/') &&
+        !href.endsWith('/blog/') &&
+        !href.includes('/category/') &&
+        !href.includes('/tag/') &&
+        !href.includes('?') &&
+        !href.includes('#') &&
+        !href.includes('page') &&
+        href.split('/').length > 4  // Ensure it's a blog post URL
+      )
+      .filter((value, index, self) => self.indexOf(value) === index) // Remove duplicates
+      .slice(0, 5);
+
+    console.log(`Found ${articleLinks.length} MyCase article links`);
+
+    for (const url of articleLinks) {
       try {
-        console.log(`Processing article at ${url}`);
-        
+        console.log(`Scraping article: ${url}`);
         await page.goto(url, {
-          waitUntil: 'networkidle',
+          waitUntil: 'networkidle0',
           timeout: 30000
         });
-        
-        // Wait for any content to be visible
-        console.log('Waiting for content...');
-        await page.waitForTimeout(5000); // Give the page time to fully render
-        
-        const data = await page.evaluate(() => {
-          // Try to find the title
-          const titleSelectors = ['h1', '.post-title', '.entry-title', '.blog-title h1', 'article h1'];
-          let title = null;
-          for (const selector of titleSelectors) {
-            const element = document.querySelector(selector);
-            if (element) {
-              title = element.textContent?.trim();
-              if (title) break;
-            }
-          }
+
+        // Wait for the main content to load
+        await page.waitForSelector('.post-content, article, .entry-content', { timeout: 10000 });
+
+        // Extract content using page evaluation for better JavaScript support
+        const article = await page.evaluate(() => {
+          const title = document.querySelector('h1')?.textContent?.trim() || '';
           
+          // Get all paragraphs from the main content area
+          const contentElements = Array.from(document.querySelectorAll('.post-content p, article p, .entry-content p'));
+          const content = contentElements
+            .map(el => el.textContent?.trim())
+            .filter(text => text && text.length > 10)
+            .join('\n\n');
+
           // Try to find the date
-          const dateSelectors = ['.post-date', '.published-date', 'time', '.entry-date', '.date'];
-          let dateStr = null;
-          for (const selector of dateSelectors) {
-            const element = document.querySelector(selector);
-            if (element) {
-              dateStr = element.textContent?.trim();
-              if (dateStr) break;
+          const dateEl = document.querySelector('meta[property="article:published_time"]');
+          let publishedAt = dateEl?.getAttribute('content') || '';
+          
+          if (!publishedAt) {
+            const dateText = document.querySelector('.post-date, .article-date')?.textContent?.trim();
+            if (dateText) {
+              try {
+                publishedAt = new Date(dateText).toISOString();
+              } catch (e) {
+                publishedAt = new Date().toISOString();
+              }
+            } else {
+              publishedAt = new Date().toISOString();
             }
           }
-          
-          // Try to find the content
-          const contentSelectors = [
-            '.post-content p',
-            '.entry-content p',
-            '.blog-content p',
-            'article p',
-            '.post p',
-            'main p'
-          ];
-          
-          let content = '';
-          for (const selector of contentSelectors) {
-            const paragraphs = Array.from(document.querySelectorAll(selector))
-              .map(p => p.textContent?.trim())
-              .filter((text): text is string => text !== null && text !== '');
-            
-            if (paragraphs.length > 0) {
-              content = paragraphs.join('\n\n');
-              break;
-            }
-          }
-          
-          const summary = document.querySelector('meta[name="description"]')?.getAttribute('content');
-          const imageUrl = document.querySelector('meta[property="og:image"]')?.getAttribute('content');
-          
-          return { title, dateStr, content, summary, imageUrl };
+
+          return { title, content, publishedAt };
         });
-        
-        if (data.title && data.content) {
-          const id = getSlugFromUrl(url);
-          const now = new Date();
-          const publishedAt = data.dateStr ? new Date(data.dateStr) : now;
-          
-          posts.push({
-            id,
-            title: data.title,
-            content: data.content,
-            summary: data.summary || '',
+
+        if (article.title && article.content) {
+          articles.push({
+            id: getSlugFromUrl(url),
+            title: article.title,
+            content: article.content,
             url,
-            imageUrl: data.imageUrl || '',
-            publishedAt,
-            source: 'mycase' as const,
-            createdAt: now,
-            updatedAt: now
+            publishedAt: article.publishedAt,
+            source: 'MyCase'
           });
-          
-          console.log(`Successfully processed: ${data.title}`);
+          console.log(`Successfully scraped article: ${article.title}`);
+        } else {
+          console.log(`Skipping article at ${url} - missing title or content`);
         }
-        
-        // Add a small delay between requests
-        await page.waitForTimeout(2000);
-        
+
+        await new Promise(resolve => setTimeout(resolve, 1500));
       } catch (error) {
         console.error(`Failed to process article at ${url}:`, error);
       }
     }
-    
-    console.log(`Successfully scraped ${posts.length} posts from MyCase`);
-    return posts;
-  } catch (error) {
-    console.error('Error scraping MyCase blog:', error);
-    throw error;
-  } finally {
-    if (page) await page.close();
-    if (context) await context.close();
-    if (browser) await browser.close();
-  }
-}
 
-// Testing the scraper directly
-async function test() {
-  try {
-    const posts = await scrapeMyCaseBlog();
-    console.log(`Found ${posts.length} posts`);
-    if (posts.length > 0) {
-      console.log('Sample post:', JSON.stringify(posts[0], null, 2));
-    }
+    await browser.close();
+    return articles;
   } catch (error) {
-    console.error('Test failed:', error);
+    console.error('Failed to scrape MyCase blog:', error);
+    return articles;
   }
-}
-
-// Run test if file is executed directly
-if (import.meta.url === new URL(import.meta.url).href) {
-  test();
 } 

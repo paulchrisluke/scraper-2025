@@ -1,259 +1,123 @@
-import { BlogPost } from '@/types/index.js';
-import { getSlugFromUrl } from '../utils/slug.js';
-import { chromium } from 'playwright';
+import { Article } from '@/types/article.js';
+import { getSlugFromUrl } from '../utils.js';
+import * as cheerio from 'cheerio';
+import puppeteer from 'puppeteer';
 
-export async function scrapeLawPayBlog(): Promise<BlogPost[]> {
-  let browser = null;
-  let context = null;
-  let page = null;
-  
+export async function scrapeLawPayBlog(): Promise<Article[]> {
+  const articles: Article[] = [];
+
   try {
-    browser = await chromium.launch({
-      headless: false // Try with visible browser for debugging
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
+
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
     
-    context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 800 },
-      deviceScaleFactor: 2
-    });
-    
-    page = await context.newPage();
-    
-    console.log('Starting LawPay blog scrape...');
-    const posts: BlogPost[] = [];
-    
-    // Start with the blog index page
+    console.log('Navigating to LawPay blog...');
     await page.goto('https://www.lawpay.com/about/blog/', {
-      waitUntil: 'networkidle',
+      waitUntil: 'networkidle0',
       timeout: 30000
     });
-    
-    console.log('Blog index page loaded, gathering article links...');
-    
-    // Get all article links from the blog index
-    const articleLinks = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('a[href*="/blog/"]'))
-        .map(link => {
-          const href = link.getAttribute('href');
-          if (!href) return null;
-          return href.startsWith('http') ? href : `https://www.lawpay.com${href}`;
-        })
-        .filter((href): href is string => 
-          href && 
-          href.includes('/blog/') &&
-          !href.endsWith('/blog/') &&
-          !href.includes('/category/') &&
-          !href.includes('/tag/') &&
-          !href.includes('/author/')
-        );
-    });
-    
-    console.log(`Found ${articleLinks.length} article links`);
-    
-    // Process each article
-    for (const url of articleLinks.slice(0, 5)) { // Limit to 5 articles for testing
+
+    // Wait for any content to load
+    await page.waitForSelector('a[href*="/blog/"]', { timeout: 10000 });
+
+    const html = await page.content();
+    const $ = cheerio.load(html);
+
+    const articleLinks = $('a[href*="/blog/"]')
+      .map((_, el) => {
+        const href = $(el).attr('href');
+        if (!href) return null;
+        if (href.startsWith('http')) return href;
+        if (href.startsWith('/')) return `https://www.lawpay.com${href}`;
+        return `https://www.lawpay.com/${href}`;
+      })
+      .get()
+      .filter((href): href is string => 
+        href !== null &&
+        href.includes('/blog/') &&
+        !href.endsWith('/blog/') &&
+        !href.includes('/category/') &&
+        !href.includes('/tag/') &&
+        !href.includes('?') &&
+        !href.includes('#') &&
+        !href.includes('page') &&
+        href.split('/').length > 4  // Ensure it's a blog post URL
+      )
+      .filter((value, index, self) => self.indexOf(value) === index) // Remove duplicates
+      .slice(0, 5);
+
+    console.log(`Found ${articleLinks.length} LawPay article links`);
+
+    for (const url of articleLinks) {
       try {
-        console.log(`Processing article at ${url}`);
-        
+        console.log(`Scraping article: ${url}`);
         await page.goto(url, {
-          waitUntil: 'networkidle',
+          waitUntil: 'networkidle0',
           timeout: 30000
         });
-        
-        // Wait for any content to be visible
-        console.log('Waiting for content...');
-        await page.waitForTimeout(5000); // Give the page time to fully render
-        
-        const data = await page.evaluate(() => {
-          // Try to find the title with exact Tailwind selectors
-          const titleSelectors = [
-            'div.px-4 h1',
-            'h1',
-            '.entry-title',
-            '.post-title',
-            '.blog-title'
-          ];
-          let title = null;
-          for (const selector of titleSelectors) {
-            const element = document.querySelector(selector);
-            if (element) {
-              title = element.textContent?.trim();
-              if (title) break;
-            }
-          }
+
+        // Wait for the main content to load
+        await page.waitForSelector('.post-content, article, .entry-content', { timeout: 10000 });
+
+        // Extract content using page evaluation for better JavaScript support
+        const article = await page.evaluate(() => {
+          const title = document.querySelector('h1')?.textContent?.trim() || '';
           
-          // Try to find the date with exact Tailwind selectors
-          const dateSelectors = [
-            'div.ml-4 > div.font-bold.text-xs',
-            'div.ml-4 > div.text-xs.font-bold',
-            // Fallback to standard selectors
-            'meta[property="article:published_time"]',
-            'meta[property="og:article:published_time"]',
-            '.post-meta time',
-            '.meta-date'
-          ];
+          // Get all paragraphs from the main content area
+          const contentElements = Array.from(document.querySelectorAll('.post-content p, article p, .entry-content p'));
+          const content = contentElements
+            .map(el => el.textContent?.trim())
+            .filter(text => text && text.length > 10)
+            .join('\n\n');
+
+          // Try to find the date
+          const dateEl = document.querySelector('meta[property="article:published_time"]');
+          let publishedAt = dateEl?.getAttribute('content') || '';
           
-          let dateStr = null;
-          for (const selector of dateSelectors) {
-            let element = document.querySelector(selector);
-            if (element) {
-              if (element.tagName.toLowerCase() === 'meta') {
-                dateStr = element.getAttribute('content');
-              } else {
-                dateStr = element.textContent?.trim() || element.getAttribute('datetime');
+          if (!publishedAt) {
+            const dateText = document.querySelector('.post-date, .article-date')?.textContent?.trim();
+            if (dateText) {
+              try {
+                publishedAt = new Date(dateText).toISOString();
+              } catch (e) {
+                publishedAt = new Date().toISOString();
               }
-              if (dateStr) break;
+            } else {
+              publishedAt = new Date().toISOString();
             }
           }
-          
-          // Try to find the author with exact Tailwind selectors
-          const authorSelectors = [
-            'div.ml-4 > div.font-light.text-sm',
-            'div.ml-4 > div.text-sm.font-light',
-            // Fallback to standard selectors
-            'meta[name="author"]',
-            '[itemprop="author"]',
-            '.author-name'
-          ];
-          
-          let author = null;
-          for (const selector of authorSelectors) {
-            const element = document.querySelector(selector);
-            if (element) {
-              if (element.tagName.toLowerCase() === 'meta') {
-                author = element.getAttribute('content');
-              } else {
-                author = element.textContent?.trim();
-              }
-              if (author) break;
-            }
-          }
-          
-          // Try to find the category with exact Tailwind selectors
-          const categorySelectors = [
-            'p.uppercase.tracking-wider.font-normal.text-xs',
-            'p.text-xs.uppercase.tracking-wider',
-            // Fallback to standard selectors
-            '.post-categories',
-            '.blog-categories',
-            '.entry-categories'
-          ];
-          
-          let categories = [];
-          for (const selector of categorySelectors) {
-            const element = document.querySelector(selector);
-            if (element) {
-              const category = element.textContent?.trim();
-              if (category) {
-                categories.push(category);
-                break;
-              }
-            }
-          }
-          
-          // Try to find the content with exact Tailwind selectors
-          const contentSelectors = [
-            'div.markdown p',
-            'article.flex.mx-auto p',
-            'div.px-4 p',
-            // Fallback to standard selectors
-            '.entry-content p',
-            'article .post-content p',
-            '.blog-content p'
-          ];
-          
-          let content = '';
-          let paragraphs = [];
-          for (const selector of contentSelectors) {
-            paragraphs = Array.from(document.querySelectorAll(selector))
-              .map(p => p.textContent?.trim())
-              .filter(text => text && 
-                !text.includes('©') && // Filter out copyright notices
-                !text.includes('All rights reserved') &&
-                text.length > 10 // Filter out very short paragraphs that might be metadata
-              );
-            
-            if (paragraphs.length > 0) {
-              content = paragraphs.join('\n\n');
-              break;
-            }
-          }
-          
-          // Try to find meta description
-          const metaDesc = document.querySelector('meta[name="description"]')?.getAttribute('content') ||
-                          document.querySelector('meta[property="og:description"]')?.getAttribute('content');
-          
-          // Try to find featured image
-          const imageUrl = document.querySelector('meta[property="og:image"]')?.getAttribute('content') ||
-                          document.querySelector('meta[name="twitter:image"]')?.getAttribute('content');
-          
-          return {
-            title,
-            author,
-            dateStr,
-            content,
-            categories,
-            metaDescription: metaDesc,
-            imageUrl
-          };
+
+          return { title, content, publishedAt };
         });
-        
-        if (data.title && data.content) {
-          const id = getSlugFromUrl(url);
-          const now = new Date();
-          const publishedAt = data.dateStr ? new Date(data.dateStr) : now;
-          
-          posts.push({
-            id,
-            title: data.title,
-            content: data.content,
-            summary: data.metaDescription || '',
+
+        if (article.title && article.content) {
+          articles.push({
+            id: getSlugFromUrl(url),
+            title: article.title,
+            content: article.content,
             url,
-            imageUrl: data.imageUrl || '',
-            publishedAt,
-            source: 'lawpay' as const,
-            createdAt: now,
-            updatedAt: now
+            publishedAt: article.publishedAt,
+            source: 'LawPay'
           });
-          
-          console.log(`Successfully processed: ${data.title}`);
+          console.log(`Successfully scraped article: ${article.title}`);
+        } else {
+          console.log(`Skipping article at ${url} - missing title or content`);
         }
-        
-        // Add a small delay between requests
-        await page.waitForTimeout(2000);
-        
+
+        await new Promise(resolve => setTimeout(resolve, 1500));
       } catch (error) {
         console.error(`Failed to process article at ${url}:`, error);
       }
     }
-    
-    console.log(`Successfully scraped ${posts.length} posts from LawPay`);
-    return posts;
-  } catch (error) {
-    console.error('Error scraping LawPay blog:', error);
-    throw error;
-  } finally {
-    if (page) await page.close();
-    if (context) await context.close();
-    if (browser) await browser.close();
-  }
-}
 
-// Testing the scraper directly
-async function test() {
-  try {
-    const posts = await scrapeLawPayBlog();
-    console.log(`Found ${posts.length} posts`);
-    if (posts.length > 0) {
-      console.log('Sample post:', JSON.stringify(posts[0], null, 2));
-    }
+    await browser.close();
+    return articles;
   } catch (error) {
-    console.error('Test failed:', error);
+    console.error('Failed to scrape LawPay blog:', error);
+    return articles;
   }
-}
-
-// Run test if file is executed directly
-if (import.meta.url === new URL(import.meta.url).href) {
-  test();
 } 

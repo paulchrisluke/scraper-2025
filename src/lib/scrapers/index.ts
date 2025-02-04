@@ -1,55 +1,23 @@
-import { BlogPost } from '@/types/index';
+import { kv } from '@vercel/kv';
 import { scrapeClioBlog } from './clio.js';
 import { scrapeMyCaseBlog } from './mycase.js';
 import { scrapeLawPayBlog } from './lawpay.js';
 
-export async function scrapeAllBlogs(): Promise<BlogPost[]> {
-  const posts: BlogPost[] = [];
-  
-  try {
-    // Run scrapers in parallel
-    const [clioPosts, myCasePosts, lawPayPosts] = await Promise.all([
-      scrapeClioBlog().catch(error => {
-        console.error('Error scraping Clio blog:', error);
-        return [];
-      }),
-      scrapeMyCaseBlog().catch(error => {
-        console.error('Error scraping MyCase blog:', error);
-        return [];
-      }),
-      scrapeLawPayBlog().catch(error => {
-        console.error('Error scraping LawPay blog:', error);
-        return [];
-      })
-    ]);
-    
-    posts.push(...clioPosts, ...myCasePosts, ...lawPayPosts);
-    
-    console.log('\nScraping Summary:');
-    console.log(`Clio: ${clioPosts.length} posts`);
-    console.log(`MyCase: ${myCasePosts.length} posts`);
-    console.log(`LawPay: ${lawPayPosts.length} posts`);
-    console.log(`Total: ${posts.length} posts\n`);
-    
-    return posts;
-  } catch (error) {
-    console.error('Error scraping blogs:', error);
-    return posts;
-  }
-}
+export async function scrapeAndStore() {
+  const articles = [
+    ...(await scrapeClioBlog()),
+    ...(await scrapeMyCaseBlog()),
+    ...(await scrapeLawPayBlog())
+  ];
 
-// Testing all scrapers
-async function test() {
-  try {
-    const posts = await scrapeAllBlogs();
-    console.log('All scrapers completed');
-    console.log(`Total posts: ${posts.length}`);
-  } catch (error) {
-    console.error('Test failed:', error);
+  // Store in Vercel KV
+  for (const article of articles) {
+    await kv.set(`article:${article.id}`, article);
+    await kv.zadd('articles_by_date', {
+      score: new Date(article.publishedAt).getTime(),
+      member: article.id
+    });
   }
-}
 
-// Run test if file is executed directly
-if (import.meta.url === new URL(import.meta.url).href) {
-  test();
+  return articles;
 } 
