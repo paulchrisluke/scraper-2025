@@ -1,112 +1,129 @@
-import { Article } from '@/types/article';
+import puppeteer from 'puppeteer';
+import { Article } from '../../types/article';
 import { getSlugFromUrl } from '../utils';
-import * as cheerio from 'cheerio';
 
 export async function scrapeLawPayBlog(): Promise<Article[]> {
   const articles: Article[] = [];
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox']
+  });
 
   try {
-    const response = await fetch('https://www.lawpay.com/about/blog/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
+    console.log('Launching browser...');
+    const page = await browser.newPage();
+    
+    // Set viewport and user agent
+    await page.setViewport({ width: 1200, height: 800 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+    console.log('Fetching LawPay blog homepage...');
+    await page.goto('https://www.lawpay.com/about/blog/', {
+      waitUntil: 'networkidle0',
+      timeout: 30000
     });
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch LawPay blog: ${response.status}`);
-    }
+    // Wait for the blog content to load
+    await page.waitForSelector('#blog-filter', { timeout: 20000 });
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
+    // Get all blog article links
+    const articleLinks = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('a[href*="/about/blog/"]:not([href*="/category/"])'));
+      return links
+        .map(link => link.getAttribute('href'))
+        .filter(href => href && !href.includes('/about/blog/category/'))
+        .slice(0, 5); // Limit to first 5 articles
+    });
 
-    const articleLinks = $('a[href*="/blog/"]')
-      .map((_, el) => {
-        const href = $(el).attr('href');
-        if (!href) return null;
-        if (href.startsWith('http')) return href;
-        if (href.startsWith('/')) return `https://www.lawpay.com${href}`;
-        return `https://www.lawpay.com/${href}`;
-      })
-      .get()
-      .filter((href): href is string => 
-        href !== null &&
-        href.includes('/blog/') &&
-        !href.endsWith('/blog/') &&
-        !href.includes('/category/') &&
-        !href.includes('/tag/') &&
-        !href.includes('?') &&
-        !href.includes('#') &&
-        !href.includes('page') &&
-        href.split('/').length > 4
-      )
-      .filter((value, index, self) => self.indexOf(value) === index)
-      .slice(0, 5);
+    console.log(`Found ${articleLinks.length} article links`);
 
-    console.log(`Found ${articleLinks.length} LawPay article links`);
+    // Process each article
+    for (const link of articleLinks) {
+      if (!link) continue;
+      
+      const fullUrl = new URL(link, 'https://www.lawpay.com').href;
+      console.log(`Processing article: ${fullUrl}`);
 
-    for (const url of articleLinks) {
+      await page.goto(fullUrl, {
+        waitUntil: 'networkidle0',
+        timeout: 30000
+      });
+
+      // Wait for the article content to be rendered
       try {
-        const articleResponse = await fetch(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        await page.waitForSelector('h1, article', { timeout: 10000 });
+      } catch (error) {
+        console.log('Timeout waiting for article content');
+        continue;
+      }
+
+      const articleData = await page.evaluate(() => {
+        const title = document.querySelector('h1')?.textContent?.trim();
+        const content = document.querySelector('article')?.textContent?.trim();
+        
+        // Try to find the publication date in various places
+        let publishedAt = null;
+
+        // First try meta tags
+        const metaDate = document.querySelector('meta[property="article:published_time"]')?.getAttribute('content');
+        if (metaDate) {
+          publishedAt = metaDate;
+        }
+
+        // Then try time elements
+        if (!publishedAt) {
+          const timeElement = document.querySelector('time');
+          publishedAt = timeElement?.getAttribute('datetime') || timeElement?.textContent?.trim();
+        }
+
+        // Finally try date elements with specific class names
+        if (!publishedAt) {
+          const dateElement = document.querySelector('.blog-article-date, .post-date');
+          publishedAt = dateElement?.textContent?.trim();
+        }
+
+        // If still no date found, try parsing from URL or other sources
+        if (!publishedAt) {
+          const urlMatch = window.location.pathname.match(/\/(\d{4})\/(\d{2})\//);
+          if (urlMatch) {
+            const [_, year, month] = urlMatch;
+            publishedAt = `${year}-${month}-01`;
           }
+        }
+
+        return {
+          title,
+          content,
+          publishedAt
+        };
+      });
+
+      if (articleData.title && articleData.content) {
+        console.log('Article data:', {
+          title: articleData.title,
+          contentLength: articleData.content.length,
+          publishedAt: articleData.publishedAt
         });
 
-        if (!articleResponse.ok) {
-          console.error(`Failed to fetch article at ${url}: ${articleResponse.status}`);
-          continue;
-        }
+        articles.push({
+          id: getSlugFromUrl(fullUrl),
+          title: articleData.title,
+          content: articleData.content,
+          url: fullUrl,
+          publishedAt: articleData.publishedAt ? new Date(articleData.publishedAt) : new Date(),
+          source: 'LawPay'
+        });
 
-        const articleHtml = await articleResponse.text();
-        const $article = cheerio.load(articleHtml);
-
-        const title = $article('h1, .post-title, .article-title').first().text().trim();
-        const content = $article('.post-content, .article-content, .entry-content')
-          .find('p')
-          .map((_, el) => $article(el).text().trim())
-          .get()
-          .filter(text => text && text.length > 10)
-          .join('\n\n');
-
-        const dateEl = $article('meta[property="article:published_time"]');
-        let publishedAt = dateEl.attr('content') || '';
-        
-        if (!publishedAt) {
-          const dateText = $article('.post-date, .article-date').first().text().trim();
-          if (dateText) {
-            try {
-              publishedAt = new Date(dateText).toISOString();
-            } catch (e) {
-              publishedAt = new Date().toISOString();
-            }
-          } else {
-            publishedAt = new Date().toISOString();
-          }
-        }
-
-        if (title && content) {
-          articles.push({
-            id: getSlugFromUrl(url),
-            title,
-            content,
-            url,
-            publishedAt,
-            source: 'LawPay'
-          });
-          console.log(`Successfully scraped article: ${title}`);
-        } else {
-          console.log(`Skipping article at ${url} - missing title or content`);
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      } catch (error) {
-        console.error(`Failed to process article at ${url}:`, error);
+        console.log(`Successfully added article: ${articleData.title}`);
+      } else {
+        console.log('Skipping article due to missing title or content');
       }
     }
-
-    return articles;
   } catch (error) {
-    console.error('Failed to scrape LawPay blog:', error);
-    return articles;
+    console.error('Error scraping LawPay blog:', error);
+  } finally {
+    await browser.close();
   }
+
+  return articles;
 } 

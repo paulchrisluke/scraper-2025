@@ -1,7 +1,6 @@
-import { Article } from '@/types/article.js';
-import { getSlugFromUrl } from '../utils.js';
+import { Article } from '@/types/article';
+import { getSlugFromUrl } from '../utils';
 import * as cheerio from 'cheerio';
-import fetch from 'node-fetch';
 
 export async function scrapeClioBlog(): Promise<Article[]> {
   const articles: Article[] = [];

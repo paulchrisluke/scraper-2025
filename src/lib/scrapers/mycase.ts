@@ -3,86 +3,72 @@ import { getSlugFromUrl } from '../utils';
 import * as cheerio from 'cheerio';
 
 export async function scrapeMyCaseBlog(): Promise<Article[]> {
-  const articles: Article[] = [];
-
   try {
+    console.log('Fetching MyCase blog homepage...');
     const response = await fetch('https://www.mycase.com/blog/', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (compatible; LegalTechScraper/1.0)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Cache-Control': 'no-cache'
       }
     });
-
+    
     if (!response.ok) {
-      throw new Error(`Failed to fetch MyCase blog: ${response.status}`);
+      console.error(`Failed to fetch MyCase blog: ${response.status} ${response.statusText}`);
+      return [];
     }
 
     const html = await response.text();
+    console.log('Parsing MyCase blog HTML...');
     const $ = cheerio.load(html);
-
-    const articleLinks = $('a[href*="/blog/"]')
-      .map((_, el) => {
-        const href = $(el).attr('href');
-        if (!href) return null;
-        if (href.startsWith('http')) return href;
-        if (href.startsWith('/')) return `https://www.mycase.com${href}`;
-        return `https://www.mycase.com/${href}`;
+    
+    // Get all article links
+    console.log('Looking for article links...');
+    const articleLinks = $('article a[href*="/blog/"], .blog__list a[href*="/blog/"], .blog-list a[href*="/blog/"]')
+      .map((_, element) => {
+        const href = $(element).attr('href');
+        console.log('Found link:', href);
+        if (href && !href.endsWith('/blog/') && href.includes('/blog/')) {
+          return href.startsWith('http') ? href : `https://www.mycase.com${href}`;
+        }
       })
       .get()
-      .filter((href): href is string => 
-        href !== null &&
-        href.includes('/blog/') &&
-        !href.endsWith('/blog/') &&
-        !href.includes('/category/') &&
-        !href.includes('/tag/') &&
-        !href.includes('?') &&
-        !href.includes('#') &&
-        !href.includes('page') &&
-        href.split('/').length > 4
-      )
-      .filter((value, index, self) => self.indexOf(value) === index)
-      .slice(0, 5);
+      .filter((href, index, self) => href && self.indexOf(href) === index) // Remove duplicates
+      .filter(href => !href.includes('/category/') && !href.includes('/tag/'))
+      .slice(0, 5); // Only process first 5 articles
 
-    console.log(`Found ${articleLinks.length} MyCase article links`);
+    console.log(`Found ${articleLinks.length} article links:`, articleLinks);
+    const articles: Article[] = [];
 
+    // Process each article
     for (const url of articleLinks) {
       try {
+        console.log(`Processing article: ${url}`);
         const articleResponse = await fetch(url, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (compatible; LegalTechScraper/1.0)',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Cache-Control': 'no-cache'
           }
         });
 
         if (!articleResponse.ok) {
-          console.error(`Failed to fetch article at ${url}: ${articleResponse.status}`);
+          console.error(`Failed to fetch article ${url}: ${articleResponse.status} ${articleResponse.statusText}`);
           continue;
         }
 
         const articleHtml = await articleResponse.text();
         const $article = cheerio.load(articleHtml);
 
-        const title = $article('h1, .post-title, .article-title').first().text().trim();
-        const content = $article('.post-content, .article-content, .entry-content')
-          .find('p')
-          .map((_, el) => $article(el).text().trim())
-          .get()
-          .filter(text => text && text.length > 10)
-          .join('\n\n');
+        // Try multiple possible selectors for each field
+        const title = $article('h1, .single__blog-title, .blog-title').first().text().trim();
+        const content = $article('.entry-content, .single__blog-content, article').text().trim();
+        const dateText = $article('.date_inner, .single__blog-date, time').first().text().trim();
+        const publishedAt = dateText ? new Date(dateText).toISOString() : new Date().toISOString();
 
-        const dateEl = $article('meta[property="article:published_time"]');
-        let publishedAt = dateEl.attr('content') || '';
-        
-        if (!publishedAt) {
-          const dateText = $article('.post-date, .article-date').first().text().trim();
-          if (dateText) {
-            try {
-              publishedAt = new Date(dateText).toISOString();
-            } catch (e) {
-              publishedAt = new Date().toISOString();
-            }
-          } else {
-            publishedAt = new Date().toISOString();
-          }
-        }
+        console.log('Article data:', { title, contentLength: content.length, publishedAt });
 
         if (title && content) {
           articles.push({
@@ -93,20 +79,21 @@ export async function scrapeMyCaseBlog(): Promise<Article[]> {
             publishedAt,
             source: 'MyCase'
           });
-          console.log(`Successfully scraped article: ${title}`);
+          console.log('Successfully added article:', title);
         } else {
-          console.log(`Skipping article at ${url} - missing title or content`);
+          console.log('Skipping article due to missing title or content');
         }
 
+        // Add delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 1500));
       } catch (error) {
-        console.error(`Failed to process article at ${url}:`, error);
+        console.error(`Error processing article ${url}:`, error);
       }
     }
 
     return articles;
   } catch (error) {
-    console.error('Failed to scrape MyCase blog:', error);
-    return articles;
+    console.error('Error scraping MyCase blog:', error);
+    return [];
   }
 } 
