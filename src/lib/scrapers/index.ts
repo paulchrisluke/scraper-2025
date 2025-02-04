@@ -1,7 +1,7 @@
 import { kv } from '@vercel/kv';
-import { scrapeClioBlog } from './clio.js';
-import { scrapeMyCaseBlog } from './mycase.js';
-import { scrapeLawPayBlog } from './lawpay.js';
+import { scrapeClioBlog } from './clio';
+import { scrapeMyCaseBlog } from './mycase';
+import { scrapeLawPayBlog } from './lawpay';
 
 export async function scrapeAndStore() {
   const articles = [
