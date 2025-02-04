@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
 import { kv } from '@vercel/kv';
 import * as cheerio from 'cheerio';
-import puppeteer from 'puppeteer';
 import { SCRAPING_CONFIG } from '@/lib/scraping/config';
 import { updateProgress, getProgress, logError } from '@/lib/scraping/progress';
 import crypto from 'crypto';
@@ -11,48 +10,38 @@ async function delay(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function fetchWithRetry(url: string, retries = 3): Promise<string> {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(url, {
+                headers: SCRAPING_CONFIG.headers
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            return await response.text();
+        } catch (error) {
+            if (i === retries - 1) throw error;
+            await delay(1000 * (i + 1)); // Exponential backoff
+        }
+    }
+    throw new Error('Failed to fetch after retries');
+}
+
 async function scrapeArticles(siteId: string) {
     console.log(`Starting scrape for ${siteId}`);
     const site = SCRAPING_CONFIG.sites[siteId];
     const progress = await getProgress(siteId);
     
-    let browser;
     try {
         // Start from the last page we were on, or the first page
         const startUrl = progress.nextPageUrl || site.baseUrl;
-        console.log(`Launching browser for ${startUrl}`);
+        console.log(`Fetching ${startUrl}`);
         
-        browser = await puppeteer.launch({
-            headless: 'new',
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        
-        const page = await browser.newPage();
-        await page.setUserAgent(SCRAPING_CONFIG.headers['User-Agent']);
-        
-        // Set other headers
-        await page.setExtraHTTPHeaders({
-            'Accept-Language': SCRAPING_CONFIG.headers['Accept-Language'],
-            'Accept': SCRAPING_CONFIG.headers['Accept']
-        });
-        
-        console.log(`Navigating to ${startUrl}`);
-        await page.goto(startUrl, { 
-            waitUntil: ['networkidle0', 'domcontentloaded'],
-            timeout: 30000 
-        });
-        
-        // Wait for the main content to load
-        await page.waitForSelector(site.articleSelector, { 
-            timeout: 20000,
-            visible: true 
-        }).catch(() => console.log(`Timeout waiting for ${site.articleSelector}`));
-        
-        // Additional wait to ensure dynamic content loads
-        await page.waitForTimeout(2000);
-        
-        // Get the rendered HTML
-        const html = await page.content();
+        // Get the HTML content
+        const html = await fetchWithRetry(startUrl);
         
         // Debug: Save the HTML for inspection
         await kv.set(`debug:html:${siteId}`, html.slice(0, 50000));
@@ -90,17 +79,6 @@ async function scrapeArticles(siteId: string) {
             contents: $(site.contentSelector).length
         });
 
-        // Count articles found on page
-        const totalArticlesOnPage = $(site.articleSelector).length;
-        console.log(`Found ${totalArticlesOnPage} articles on page`);
-        
-        if (totalArticlesOnPage === 0) {
-            console.log('HTML structure around where articles should be:');
-            $('main, #main, .main, #content, .content').each((i, el) => {
-                console.log(`Main content area ${i + 1}:`, $(el).html()?.slice(0, 500));
-            });
-        }
-        
         // Get all article URLs first
         const articleUrls = new Set();
         $(site.articleSelector).each((_, el) => {
@@ -119,19 +97,8 @@ async function scrapeArticles(siteId: string) {
         const articles = [];
         for (const url of Array.from(articleUrls).slice(0, SCRAPING_CONFIG.batchSize)) {
             try {
-                console.log(`Navigating to article: ${url}`);
-                await page.goto(url, { 
-                    waitUntil: ['networkidle0', 'domcontentloaded'],
-                    timeout: 30000 
-                });
-                
-                // Wait for article content
-                await page.waitForSelector(site.titleSelector, { 
-                    timeout: 20000,
-                    visible: true 
-                });
-                
-                const articleHtml = await page.content();
+                console.log(`Fetching article: ${url}`);
+                const articleHtml = await fetchWithRetry(url);
                 const $article = cheerio.load(articleHtml);
                 
                 const title = $article(site.titleSelector).first().text().trim();
@@ -161,7 +128,7 @@ async function scrapeArticles(siteId: string) {
                     });
                 }
                 
-                await page.waitForTimeout(SCRAPING_CONFIG.delays.betweenPages);
+                await delay(SCRAPING_CONFIG.delays.betweenPages);
             } catch (error) {
                 console.error(`Error processing article at ${url}:`, error);
             }
@@ -197,13 +164,11 @@ async function scrapeArticles(siteId: string) {
         console.error(`Error scraping ${siteId}:`, error);
         await logError(siteId, error.message);
         throw error;
-    } finally {
-        if (browser) {
-            await browser.close();
-            console.log('Browser closed');
-        }
     }
 }
+
+export const runtime = 'edge';
+export const preferredRegion = 'iad1';
 
 export async function GET(request: Request) {
     console.log('Scraping endpoint called');
