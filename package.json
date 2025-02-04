@@ -9,14 +9,19 @@
     "lint": "next lint",
     "test": "jest",
     "test:scrape": "NODE_ENV=development tsx src/scripts/test-content.ts",
-    "scrape": "node src/app/api/scrape/manual/route.ts"
+    "scrape": "tsx src/scripts/scrape.ts",
+    "scrape:clio": "tsx src/scripts/scrape.ts clio",
+    "scrape:mycase": "tsx src/scripts/scrape.ts mycase",
+    "scrape:lawpay": "tsx src/scripts/scrape.ts lawpay",
+    "scrape:all": "tsx src/scripts/scrape.ts all"
   },
   "dependencies": {
+    "@types/node-fetch": "^2.6.12",
     "@vercel/kv": "^1.0.0",
-    "cheerio": "1.0.0-rc.12",
+    "cheerio": "^1.0.0-rc.12",
     "feed": "^4.2.2",
     "next": "14.1.0",
-    "node-fetch": "^3.3.2",
+    "node-fetch": "^2.7.0",
     "openai": "^4.0.0",
     "puppeteer": "^22.0.0",
     "react": "^18.2.0",
@@ -33,7 +38,7 @@
     "jest": "^29.0.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.0.0",
-    "tsx": "^4.7.0"
+    "tsx": "^4.7.0",
+    "typescript": "^5.0.0"
   }
 }
