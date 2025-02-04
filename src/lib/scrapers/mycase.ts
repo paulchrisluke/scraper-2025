@@ -1,30 +1,22 @@
-import { Article } from '@/types/article.js';
-import { getSlugFromUrl } from '../utils.js';
+import { Article } from '@/types/article';
+import { getSlugFromUrl } from '../utils';
 import * as cheerio from 'cheerio';
-import puppeteer from 'puppeteer';
 
 export async function scrapeMyCaseBlog(): Promise<Article[]> {
   const articles: Article[] = [];
 
   try {
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    const response = await fetch('https://www.mycase.com/blog/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
     });
 
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-    
-    console.log('Navigating to MyCase blog...');
-    await page.goto('https://www.mycase.com/blog/', {
-      waitUntil: 'networkidle0',
-      timeout: 30000
-    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch MyCase blog: ${response.status}`);
+    }
 
-    // Wait for the content to load
-    await page.waitForSelector('.blog-post, article', { timeout: 10000 });
-
-    const html = await page.content();
+    const html = await response.text();
     const $ = cheerio.load(html);
 
     const articleLinks = $('a[href*="/blog/"]')
@@ -45,65 +37,63 @@ export async function scrapeMyCaseBlog(): Promise<Article[]> {
         !href.includes('?') &&
         !href.includes('#') &&
         !href.includes('page') &&
-        href.split('/').length > 4  // Ensure it's a blog post URL
+        href.split('/').length > 4
       )
-      .filter((value, index, self) => self.indexOf(value) === index) // Remove duplicates
+      .filter((value, index, self) => self.indexOf(value) === index)
       .slice(0, 5);
 
     console.log(`Found ${articleLinks.length} MyCase article links`);
 
     for (const url of articleLinks) {
       try {
-        console.log(`Scraping article: ${url}`);
-        await page.goto(url, {
-          waitUntil: 'networkidle0',
-          timeout: 30000
+        const articleResponse = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
         });
 
-        // Wait for the main content to load
-        await page.waitForSelector('.post-content, article, .entry-content', { timeout: 10000 });
+        if (!articleResponse.ok) {
+          console.error(`Failed to fetch article at ${url}: ${articleResponse.status}`);
+          continue;
+        }
 
-        // Extract content using page evaluation for better JavaScript support
-        const article = await page.evaluate(() => {
-          const title = document.querySelector('h1')?.textContent?.trim() || '';
-          
-          // Get all paragraphs from the main content area
-          const contentElements = Array.from(document.querySelectorAll('.post-content p, article p, .entry-content p'));
-          const content = contentElements
-            .map(el => el.textContent?.trim())
-            .filter(text => text && text.length > 10)
-            .join('\n\n');
+        const articleHtml = await articleResponse.text();
+        const $article = cheerio.load(articleHtml);
 
-          // Try to find the date
-          const dateEl = document.querySelector('meta[property="article:published_time"]');
-          let publishedAt = dateEl?.getAttribute('content') || '';
-          
-          if (!publishedAt) {
-            const dateText = document.querySelector('.post-date, .article-date')?.textContent?.trim();
-            if (dateText) {
-              try {
-                publishedAt = new Date(dateText).toISOString();
-              } catch (e) {
-                publishedAt = new Date().toISOString();
-              }
-            } else {
+        const title = $article('h1, .post-title, .article-title').first().text().trim();
+        const content = $article('.post-content, .article-content, .entry-content')
+          .find('p')
+          .map((_, el) => $article(el).text().trim())
+          .get()
+          .filter(text => text && text.length > 10)
+          .join('\n\n');
+
+        const dateEl = $article('meta[property="article:published_time"]');
+        let publishedAt = dateEl.attr('content') || '';
+        
+        if (!publishedAt) {
+          const dateText = $article('.post-date, .article-date').first().text().trim();
+          if (dateText) {
+            try {
+              publishedAt = new Date(dateText).toISOString();
+            } catch (e) {
               publishedAt = new Date().toISOString();
             }
+          } else {
+            publishedAt = new Date().toISOString();
           }
+        }
 
-          return { title, content, publishedAt };
-        });
-
-        if (article.title && article.content) {
+        if (title && content) {
           articles.push({
             id: getSlugFromUrl(url),
-            title: article.title,
-            content: article.content,
+            title,
+            content,
             url,
-            publishedAt: article.publishedAt,
+            publishedAt,
             source: 'MyCase'
           });
-          console.log(`Successfully scraped article: ${article.title}`);
+          console.log(`Successfully scraped article: ${title}`);
         } else {
           console.log(`Skipping article at ${url} - missing title or content`);
         }
@@ -114,7 +104,6 @@ export async function scrapeMyCaseBlog(): Promise<Article[]> {
       }
     }
 
-    await browser.close();
     return articles;
   } catch (error) {
     console.error('Failed to scrape MyCase blog:', error);
